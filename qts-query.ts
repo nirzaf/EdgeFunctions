@@ -31,52 +31,68 @@ const PROMPTS = [
 ];
 
 /**
- * A robust function to call the Google AI API with built-in retry logic.
+ * A robust function to call the Google AI API with built-in retry logic and backup API key support.
  * @param {string} prompt - The prompt to send to the AI.
- * @param {string} apiKey - The Google AI API key.
- * @returns {Promise<{aiData: object, modelUsed: string}>} - A promise that resolves with the AI data and the model that was used.
+ * @param {string} apiKey - The primary Google AI API key.
+ * @param {string} backupApiKey - The backup Google AI API key (optional).
+ * @returns {Promise<{aiData: object, modelUsed: string, keyUsed: string}>} - A promise that resolves with the AI data, model used, and which key was used.
  */
-async function callGenerativeApi(prompt, apiKey) {
-  let model = 'gemini-2.5-flash';
-  let apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+async function callGenerativeApi(prompt, apiKey, backupApiKey = null) {
+  const tryWithKey = async (key, keyLabel) => {
+    let model = 'gemini-2.5-flash';
+    let apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
-  const requestBody = {
-    tools: [{ google_search: {} }],
-    contents: [{ parts: [{ text: prompt }] }],
-  };
+    const requestBody = {
+      tools: [{ google_search: {} }],
+      contents: [{ parts: [{ text: prompt }] }],
+    };
 
-  const requestOptions = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody),
-  };
+    const requestOptions = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    };
 
-  try {
     let response = await fetch(apiUrl, requestOptions);
 
     // If rate-limited, wait 3 seconds and retry with the lite model
     if (response.status === 429) {
-      console.warn(`Rate limit exceeded with ${model}. Retrying with gemini-1.5-flash-lite in 3 seconds...`);
+      console.warn(`Rate limit exceeded with ${model} using ${keyLabel}. Retrying with gemini-2.5-flash-lite in 3 seconds...`);
       await new Promise(resolve => setTimeout(resolve, 3000));
 
       model = 'gemini-2.5-flash-lite';
-      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      
+      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+
       response = await fetch(apiUrl, requestOptions);
     }
 
-    // If the response is still not OK after potential retry, throw an error
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({ error: { message: "Failed to parse error response." } }));
       throw new Error(`Google AI API error (${response.status}): ${errorBody.error.message}`);
     }
 
     const aiData = await response.json();
-    return { aiData, modelUsed: model };
+    return { aiData, modelUsed: model, keyUsed: keyLabel };
+  };
 
+  try {
+    // Try with primary API key first
+    return await tryWithKey(apiKey, 'primary');
   } catch (error) {
-    // Gracefully handle network errors or other fetch-related issues
-    console.error("Error during Google AI API call:", error.message);
+    console.warn(`Primary API key failed: ${error.message}`);
+
+    // If primary key fails with 503 (overloaded) or 429 (rate limit) and backup key exists, try backup
+    if (backupApiKey && (error.message.includes('503') || error.message.includes('429') || error.message.includes('overloaded'))) {
+      console.log('Attempting with backup API key...');
+      try {
+        return await tryWithKey(backupApiKey, 'backup');
+      } catch (backupError) {
+        console.error(`Backup API key also failed: ${backupError.message}`);
+        throw new Error(`Both API keys failed. Primary: ${error.message}. Backup: ${backupError.message}`);
+      }
+    }
+
+    // If no backup key or different error, throw original error
     throw new Error(`Failed to communicate with Google AI API: ${error.message}`);
   }
 }
@@ -99,19 +115,21 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     if (!supabaseUrl || !supabaseServiceKey) {
-        throw new Error("Supabase URL or Service Key is not configured.");
+      throw new Error("Supabase URL or Service Key is not configured.");
     }
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    
 
-    // 3. Get Gemini API Key
+
+    // 3. Get Gemini API Keys
     const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
+    const geminiBackupApiKey = Deno.env.get('GEMINI_API_BACKUP_KEY');
+
     if (!geminiApiKey) {
       throw new Error("GEMINI_API_KEY is not set in Supabase secrets.");
     }
 
-    // 4. Call the robust API function
-    const { aiData, modelUsed } = await callGenerativeApi(prompt, geminiApiKey);
+    // 4. Call the robust API function with backup key support
+    const { aiData, modelUsed, keyUsed } = await callGenerativeApi(prompt, geminiApiKey, geminiBackupApiKey);
 
     const aiResponseText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!aiResponseText) {
@@ -135,7 +153,7 @@ Deno.serve(async (req) => {
       throw new Error(`Database insert error: ${insertError.message}`);
     }
 
-    console.log(`Successfully inserted response (ID: ${insertData.id}) using model: ${modelUsed}`);
+    console.log(`Successfully inserted response (ID: ${insertData.id}) using model: ${modelUsed} with ${keyUsed} API key`);
 
     // 6. Return a success response
     return new Response(JSON.stringify({
@@ -148,7 +166,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error("Error processing request:", error.message);
-    
+
     // 7. Return a structured error response
     return new Response(JSON.stringify({
       status: "error",
