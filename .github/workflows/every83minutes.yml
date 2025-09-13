@@ -1,0 +1,16 @@
+name: Call Random QTS Query Every 83 Minutes
+
+on:
+  schedule:
+    # Run at minute 23 of every hour, then skip the next hour (approximately 83 minutes)
+    - cron: '23 */2 * * *'
+  workflow_dispatch:
+
+jobs:
+  call-api-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Supabase GET Function 'qtsquery'
+        run: |
+          curl -f -L -X GET 'https://npwbxlvcfrawolebzawn.supabase.co/functions/v1/qtsquery' \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
