@@ -1,0 +1,15 @@
+name: Call Random QTS Query Every 23 Minutes
+
+on:
+  schedule:
+    - cron: '*/23 * * * *'
+  workflow_dispatch:
+
+jobs:
+  call-api-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Supabase GET Function 'qtsquery'
+        run: |
+          curl -f -L -X GET 'https://yxevuqaxdqrwowthcwkz.supabase.co/functions/v1/qtsquery' \
+            -H "Authorization: Bearer ${{ secrets.ANON_KEY_NEW }}"
