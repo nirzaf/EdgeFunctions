@@ -9,7 +9,9 @@ jobs:
   call-api-job:
     runs-on: ubuntu-latest
     steps:
-      - name: Call Supabase GET Function 'qtsquery'
+      - name: Call Supabase GET Function 'clarifai'
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
         run: |
-          curl -f -L -X GET 'https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/clarifai' \
+          curl -f -L -X GET "${SUPABASE_URL}/functions/v1/clarifai" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
