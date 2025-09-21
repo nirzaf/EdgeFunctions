@@ -11,5 +11,5 @@ jobs:
     steps:
       - name: Call Supabase GET Function 'clarifai'
         run: |
-          curl -f -L -X GET "${{vars.SUPABASE_URL}}/functions/v1/clarifai" \
+          curl -f -L -X GET "https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/clarifai" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
